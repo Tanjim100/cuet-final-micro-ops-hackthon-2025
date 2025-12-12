@@ -1,55 +1,108 @@
-version: "3.8"
+# services:
+#   # --- your existing services like api, db, jaeger, etc.
+
+#   api:
+#     # ...
+#     environment:
+#       - NODE_ENV=development
+#       - PORT=3000
+#       - S3_ENDPOINT=http://minio:9000
+#       - S3_ACCESS_KEY_ID=minioadmin
+#       - S3_SECRET_ACCESS_KEY=minioadmin
+#       - S3_BUCKET_NAME=downloads
+#       - S3_FORCE_PATH_STYLE=true
+
+#   minio:
+#     image: minio/minio:RELEASE
+#     container_name: minio
+#     environment:
+#       MINIO_ROOT_USER: minioadmin
+#       MINIO_ROOT_PASSWORD: minioadmin
+#     command: server /data --console-address ":9001"
+#     ports:
+#       - "9000:9000"   # S3 API
+#       - "9001:9001"   # MinIO console (optional)
+#     volumes:
+#       - minio_data:/data
+#     healthcheck:
+#       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9000/minio/health/live"]
+#       interval: 5s
+#       timeout: 3s
+#       retries: 5
+
+#   mc-init:
+#     image: minio/mc
+#     depends_on:
+#       - minio
+#     entrypoint: >
+#       /bin/sh -c "
+#       # wait until minio is ready
+#       until wget -qO- http://minio:9000/minio/health/ready; do
+#         echo 'waiting for minio...'; sleep 1;
+#       done;
+#       mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} --api S3v4;
+#       mc mb --ignore-existing local/downloads;
+#       echo 'bucket ready';
+#       "
+#     environment:
+#       MINIO_ROOT_USER: minioadmin
+#       MINIO_ROOT_PASSWORD: minioadmin
+#     networks:
+#       - default
+
+# volumes:
+#   minio_data:
+
+
 services:
-  # --- your existing services like api, db, jaeger, etc.
-
+  # --- Backend API service
   api:
-    # ...
-    environment:
-      - NODE_ENV=development
-      - PORT=3000
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY_ID=minioadmin
-      - S3_SECRET_ACCESS_KEY=minioadmin
-      - S3_BUCKET_NAME=downloads
-      - S3_FORCE_PATH_STYLE=true
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    ports:
+      - "3000:3000"
+    env_file:
+      - ../.env   # points to .env in project root
+    depends_on:
+      minio:
+        condition: service_healthy
+      mc-init:
+        condition: service_completed_successfully
 
+  # --- MinIO S3 storage
   minio:
-    image: minio/minio:RELEASE
-    container_name: minio
+    image: minio/minio:latest
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"   # S3 API
-      - "9001:9001"   # MinIO console (optional)
+      - "9001:9001"   # MinIO console
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 5
 
+  # --- Bucket initialization (mc-init)
   mc-init:
     image: minio/mc
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      # wait until minio is ready
-      until wget -qO- http://minio:9000/minio/health/ready; do
-        echo 'waiting for minio...'; sleep 1;
-      done;
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} --api S3v4;
+      mc alias set local http://minio:9000 minioadmin minioadmin --api S3v4;
       mc mb --ignore-existing local/downloads;
       echo 'bucket ready';
       "
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
     networks:
       - default
 
 volumes:
   minio_data:
+
